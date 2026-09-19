@@ -11,6 +11,9 @@ frontend/.env*.local
 # env / secrets
 .env
 
+# desktop/ is its own separate repo (ytpd-desktop), not part of this one
+/desktop/
+
 # runtime data (local dev only - NOT "data/", which case-insensitively
 # collides with backend/YtpdWeb.Api/Data/ on Windows and would hide it)
 .rundata/

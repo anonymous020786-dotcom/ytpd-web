@@ -15,7 +15,9 @@ export type ResolveResponse = {
   truncated: boolean;
 };
 
-export type DownloadFormat = "Mp4" | "Mkv" | "Mp3" | "M4a" | "Wav";
+export type DownloadFormat = "Mp4" | "Mkv" | "Webm" | "Mp3" | "M4a" | "Wav" | "Opus";
+
+export const VIDEO_FORMATS: DownloadFormat[] = ["Mp4", "Mkv", "Webm"];
 
 export type JobItemStatus =
   | "Queued"
@@ -24,7 +26,8 @@ export type JobItemStatus =
   | "Converting"
   | "Tagging"
   | "Completed"
-  | "Failed";
+  | "Failed"
+  | "Cancelled";
 
 export type JobItemStatusDto = {
   id: string;

@@ -6,13 +6,16 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { useAuth } from "@/lib/auth-context";
+import { useIsElectron } from "@/lib/use-is-electron";
 import { cn } from "@/lib/utils";
+import { DownloadFolderControl } from "./download-folder-control";
 
 export function Navbar() {
   const { username, logout } = useAuth();
   const { theme, setTheme } = useTheme();
   const pathname = usePathname();
   const router = useRouter();
+  const isElectron = useIsElectron();
 
   return (
     <header className="border-b bg-background/95 backdrop-blur sticky top-0 z-10">
@@ -49,18 +52,22 @@ export function Navbar() {
             <Moon className="absolute h-4 w-4 scale-0 dark:scale-100 transition-transform" />
           </Button>
 
+          <DownloadFolderControl />
+
           <span className="mx-1 hidden text-sm text-muted-foreground sm:inline">{username}</span>
-          <Button
-            variant="ghost"
-            size="icon"
-            aria-label="Log out"
-            onClick={() => {
-              logout();
-              router.push("/login");
-            }}
-          >
-            <LogOut className="h-4 w-4" />
-          </Button>
+          {!isElectron && (
+            <Button
+              variant="ghost"
+              size="icon"
+              aria-label="Log out"
+              onClick={() => {
+                logout();
+                router.push("/login");
+              }}
+            >
+              <LogOut className="h-4 w-4" />
+            </Button>
+          )}
         </nav>
       </div>
     </header>

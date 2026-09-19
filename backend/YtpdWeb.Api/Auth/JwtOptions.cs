@@ -17,4 +17,9 @@ public class AuthCredentialsOptions
 
     // PBKDF2 hash produced by PasswordHasher, not a plaintext password.
     public string PasswordHash { get; set; } = "";
+
+    // Set by the desktop build only, whose sidecar process binds to
+    // 127.0.0.1 and is never reachable from outside the machine - skips the
+    // login screen since there's only ever one local user anyway.
+    public bool LocalMode { get; set; }
 }

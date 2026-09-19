@@ -29,4 +29,16 @@ public class AuthController(
         var token = jwtService.IssueToken(creds.Username);
         return Ok(new LoginResponse(token, creds.Username));
     }
+
+    // Only registered behavior when Auth:LocalMode is on (desktop build). No
+    // credential check at all - safe only because the desktop sidecar binds
+    // Kestrel to 127.0.0.1, so nothing off-machine can ever reach this.
+    [HttpPost("local-token")]
+    public ActionResult<LoginResponse> LocalToken()
+    {
+        if (!credentials.Value.LocalMode) return NotFound();
+
+        var token = jwtService.IssueToken("local");
+        return Ok(new LoginResponse(token, "local"));
+    }
 }

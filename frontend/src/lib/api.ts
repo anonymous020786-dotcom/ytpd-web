@@ -48,6 +48,9 @@ export const api = {
       body: JSON.stringify({ username, password }),
     }),
 
+  // Only succeeds against a desktop-build backend with Auth:LocalMode on.
+  localLogin: () => request<{ token: string; username: string }>("/api/auth/local-token", { method: "POST" }),
+
   resolve: (url: string) =>
     request<ResolveResponse>("/api/resolve", {
       method: "POST",
@@ -71,6 +74,9 @@ export const api = {
   getJob: (id: string) => request<JobStatusDto>(`/api/downloads/${id}`),
 
   deleteJob: (id: string) => request<void>(`/api/downloads/${id}`, { method: "DELETE" }),
+
+  cancelItem: (jobId: string, itemId: string) =>
+    request<void>(`/api/downloads/${jobId}/items/${itemId}/cancel`, { method: "POST" }),
 
   downloadItemFile: (jobId: string, itemId: string, suggestedName: string) =>
     downloadWithAuth(`/api/downloads/${jobId}/items/${itemId}/file`, suggestedName),

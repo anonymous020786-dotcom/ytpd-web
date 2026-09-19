@@ -1,4 +1,4 @@
-import { CheckCircle2, Download, Loader2, Tag, XCircle } from "lucide-react";
+import { Ban, CheckCircle2, Download, Loader2, Tag, XCircle } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import type { JobItemStatus } from "@/lib/types";
 
@@ -10,6 +10,7 @@ const STATUS_META: Record<JobItemStatus, { label: string; variant: "default" | "
   Tagging: { label: "Tagging", variant: "secondary", icon: <Tag className="h-3 w-3" /> },
   Completed: { label: "Done", variant: "default", icon: <CheckCircle2 className="h-3 w-3" /> },
   Failed: { label: "Failed", variant: "destructive", icon: <XCircle className="h-3 w-3" /> },
+  Cancelled: { label: "Cancelled", variant: "outline", icon: <Ban className="h-3 w-3" /> },
 };
 
 export function StatusBadge({ status }: { status: JobItemStatus }) {

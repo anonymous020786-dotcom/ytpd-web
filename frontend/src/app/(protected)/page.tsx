@@ -19,6 +19,7 @@ import {
 import { VideoPickerCard } from "@/components/video-picker-card";
 import { api, ApiError } from "@/lib/api";
 import type { DownloadFormat, ResolveResponse } from "@/lib/types";
+import { VIDEO_FORMATS } from "@/lib/types";
 
 const QUALITIES = ["best", "2160p", "1440p", "1080p", "720p", "480p", "360p"];
 
@@ -34,7 +35,7 @@ export default function DashboardPage() {
   const [isCreating, setIsCreating] = useState(false);
   const [activeJobId, setActiveJobId] = useState<string | null>(null);
 
-  const isVideoFormat = format === "Mp4" || format === "Mkv";
+  const isVideoFormat = VIDEO_FORMATS.includes(format);
 
   async function handleResolve() {
     if (!url.trim()) return;
@@ -160,9 +161,11 @@ export default function DashboardPage() {
                   <SelectContent>
                     <SelectItem value="Mp4">MP4 (video)</SelectItem>
                     <SelectItem value="Mkv">MKV (video)</SelectItem>
+                    <SelectItem value="Webm">WebM (video)</SelectItem>
                     <SelectItem value="Mp3">MP3 (audio)</SelectItem>
                     <SelectItem value="M4a">M4A (audio)</SelectItem>
                     <SelectItem value="Wav">WAV (audio)</SelectItem>
+                    <SelectItem value="Opus">Opus (audio)</SelectItem>
                   </SelectContent>
                 </Select>
               </div>

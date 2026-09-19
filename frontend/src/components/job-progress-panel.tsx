@@ -1,13 +1,18 @@
 "use client";
 
-import { Archive, Download } from "lucide-react";
+import { Archive, Download, X } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
 import { api, ApiError } from "@/lib/api";
+import type { JobItemStatus } from "@/lib/types";
 import { useJobProgress } from "@/lib/use-job-progress";
 import { StatusBadge } from "./status-badge";
+
+function isTerminalStatus(status: JobItemStatus) {
+  return status === "Completed" || status === "Failed" || status === "Cancelled";
+}
 
 export function JobProgressPanel({ jobId }: { jobId: string }) {
   const job = useJobProgress(jobId);
@@ -28,6 +33,14 @@ export function JobProgressPanel({ jobId }: { jobId: string }) {
       await api.downloadItemFile(jobId, itemId, `${title}.${ext}`);
     } catch (err) {
       toast.error(err instanceof ApiError ? err.message : "Download failed");
+    }
+  }
+
+  async function handleCancel(itemId: string) {
+    try {
+      await api.cancelItem(jobId, itemId);
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : "Could not cancel");
     }
   }
 
@@ -62,7 +75,7 @@ export function JobProgressPanel({ jobId }: { jobId: string }) {
             <div className="min-w-0 flex-1">
               <p className="truncate text-sm font-medium">{item.title}</p>
               <p className="truncate text-xs text-muted-foreground">{item.author}</p>
-              {item.status !== "Completed" && item.status !== "Failed" && (
+              {!isTerminalStatus(item.status) && (
                 <Progress value={Math.round(item.progress * 100)} className="mt-2 h-1.5" />
               )}
               {item.status === "Failed" && item.errorMessage && (
@@ -78,6 +91,16 @@ export function JobProgressPanel({ jobId }: { jobId: string }) {
                 onClick={() => handleDownload(item.id, item.title, job.format.toLowerCase())}
               >
                 <Download className="h-4 w-4" />
+              </Button>
+            )}
+            {!isTerminalStatus(item.status) && (
+              <Button
+                size="icon"
+                variant="ghost"
+                aria-label="Cancel download"
+                onClick={() => handleCancel(item.id)}
+              >
+                <X className="h-4 w-4" />
               </Button>
             )}
           </div>

@@ -19,12 +19,42 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
-    // One-time sync from localStorage (an external system) on mount; this is
-    // the documented exception to "don't setState in effects".
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    setToken(localStorage.getItem("ytpd_token"));
-    setUsername(localStorage.getItem("ytpd_username"));
-    setIsLoading(false);
+    let cancelled = false;
+
+    async function init() {
+      const storedToken = localStorage.getItem("ytpd_token");
+      const storedUsername = localStorage.getItem("ytpd_username");
+
+      // Inside the Electron shell there's only one local user and the
+      // backend only accepts loopback connections, so skip the login screen
+      // entirely via the desktop-only local-token endpoint.
+      if (!storedToken && typeof window !== "undefined" && window.electronAPI?.isElectron) {
+        try {
+          const res = await api.localLogin();
+          if (cancelled) return;
+          localStorage.setItem("ytpd_token", res.token);
+          localStorage.setItem("ytpd_username", res.username);
+          setToken(res.token);
+          setUsername(res.username);
+          setIsLoading(false);
+          return;
+        } catch {
+          // Backend not ready yet or not a local-mode build - fall through
+          // to the normal login screen.
+        }
+      }
+
+      if (!cancelled) {
+        setToken(storedToken);
+        setUsername(storedUsername);
+        setIsLoading(false);
+      }
+    }
+
+    init();
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   async function login(username: string, password: string) {

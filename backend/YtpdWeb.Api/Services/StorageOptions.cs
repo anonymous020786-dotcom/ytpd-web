@@ -11,3 +11,12 @@ public class StorageOptions
     // hosted VPS from silently filling its disk with old downloaded media.
     public int RetentionHours { get; set; } = 48;
 }
+
+public class FfmpegOptions
+{
+    public const string SectionName = "Ffmpeg";
+
+    // "ffmpeg" resolves via PATH for local/server installs; the desktop
+    // build points this at its bundled binary instead.
+    public string Path { get; set; } = "ffmpeg";
+}

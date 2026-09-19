@@ -9,15 +9,18 @@ public enum JobItemStatus
     Tagging,
     Completed,
     Failed,
+    Cancelled,
 }
 
 public enum DownloadFormat
 {
     Mp4,
     Mkv,
+    Webm,
     Mp3,
     M4a,
     Wav,
+    Opus,
 }
 
 public class DownloadJob

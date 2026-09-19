@@ -4,10 +4,10 @@ namespace YtpdWeb.Api.Services;
 
 public static class QualitySelector
 {
-    public static VideoOnlyStreamInfo? PickVideoStream(StreamManifest manifest, string quality)
+    public static VideoOnlyStreamInfo? PickVideoStream(StreamManifest manifest, string quality, Container preferredContainer)
     {
         var candidates = manifest.GetVideoOnlyStreams()
-            .Where(s => s.Container == Container.Mp4)
+            .Where(s => s.Container == preferredContainer)
             .OrderByDescending(s => s.VideoQuality)
             .ToList();
 
@@ -32,10 +32,19 @@ public static class QualitySelector
         return candidates.First();
     }
 
-    public static AudioOnlyStreamInfo? PickAudioStream(StreamManifest manifest)
+    // preferredContainer matters when the result gets ffmpeg `-c copy` muxed
+    // alongside a video stream of that same container (e.g. WebM+Opus) -
+    // mismatched containers can't be copy-muxed together.
+    public static AudioOnlyStreamInfo? PickAudioStream(StreamManifest manifest, Container? preferredContainer = null)
     {
-        return manifest.GetAudioOnlyStreams()
-            .OrderByDescending(s => s.Bitrate)
-            .FirstOrDefault();
+        var streams = manifest.GetAudioOnlyStreams();
+
+        if (preferredContainer is { } container)
+        {
+            var matched = streams.Where(s => s.Container == container).OrderByDescending(s => s.Bitrate).FirstOrDefault();
+            if (matched is not null) return matched;
+        }
+
+        return streams.OrderByDescending(s => s.Bitrate).FirstOrDefault();
     }
 }

@@ -20,11 +20,13 @@ public class DownloadWorker(
     IServiceScopeFactory scopeFactory,
     IHubContext<ProgressHub> hub,
     IOptions<StorageOptions> storageOptions,
+    IOptions<FfmpegOptions> ffmpegOptions,
     ILogger<DownloadWorker> logger
 ) : BackgroundService
 {
     private const int Concurrency = 2;
     private readonly StorageOptions _storage = storageOptions.Value;
+    private readonly string _ffmpegPath = ffmpegOptions.Value.Path;
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
@@ -52,16 +54,23 @@ public class DownloadWorker(
         }
     }
 
-    private async Task ProcessItemAsync(Guid itemId, CancellationToken ct)
+    private async Task ProcessItemAsync(Guid itemId, CancellationToken appCt)
     {
         using var scope = scopeFactory.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
 
-        var item = await db.JobItems.Include(i => i.Job).FirstOrDefaultAsync(i => i.Id == itemId, ct);
+        var item = await db.JobItems.Include(i => i.Job).FirstOrDefaultAsync(i => i.Id == itemId, appCt);
         if (item is null) return;
+
+        // Cancelled while it was still sitting in the queue (never started) -
+        // nothing to tear down, just leave the status as-is.
+        if (item.Status == JobItemStatus.Cancelled) return;
 
         var tempDir = Path.Combine(_storage.TempPath, item.Id.ToString());
         Directory.CreateDirectory(tempDir);
+
+        using var itemCts = queue.BeginTracking(item.Id, appCt);
+        var ct = itemCts.Token;
 
         try
         {
@@ -70,7 +79,7 @@ public class DownloadWorker(
 
             var manifest = await youtube.Videos.Streams.GetManifestAsync(item.VideoId, ct);
             var format = item.Job.Format;
-            var isVideoFormat = format is DownloadFormat.Mp4 or DownloadFormat.Mkv;
+            var isVideoFormat = format is DownloadFormat.Mp4 or DownloadFormat.Mkv or DownloadFormat.Webm;
 
             var finalDir = Path.Combine(_storage.DownloadsPath, item.JobId.ToString());
             Directory.CreateDirectory(finalDir);
@@ -89,16 +98,26 @@ public class DownloadWorker(
             await db.SaveChangesAsync(ct);
             await BroadcastAsync(item, ct);
         }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            // Use None below: `ct` is the (now-cancelled) per-item token, and
+            // we still need this write to actually go through.
+            item.Status = JobItemStatus.Cancelled;
+            item.ErrorMessage = null;
+            await db.SaveChangesAsync(CancellationToken.None);
+            await BroadcastAsync(item, CancellationToken.None);
+        }
         catch (Exception ex)
         {
             logger.LogWarning(ex, "Job item {ItemId} failed", item.Id);
             item.Status = JobItemStatus.Failed;
             item.ErrorMessage = ex.Message;
-            await db.SaveChangesAsync(ct);
-            await BroadcastAsync(item, ct);
+            await db.SaveChangesAsync(CancellationToken.None);
+            await BroadcastAsync(item, CancellationToken.None);
         }
         finally
         {
+            queue.EndTracking(item.Id);
             try { Directory.Delete(tempDir, true); } catch { /* best effort */ }
         }
     }
@@ -107,9 +126,11 @@ public class DownloadWorker(
         YoutubeClient youtube, StreamManifest manifest, DownloadJobItem item,
         string tempDir, string finalPath, AppDbContext db, CancellationToken ct)
     {
-        var videoStream = QualitySelector.PickVideoStream(manifest, item.Job.Quality)
+        var preferredContainer = item.Job.Format == DownloadFormat.Webm ? Container.WebM : Container.Mp4;
+
+        var videoStream = QualitySelector.PickVideoStream(manifest, item.Job.Quality, preferredContainer)
             ?? throw new InvalidOperationException("No suitable video stream was found for this video.");
-        var audioStream = QualitySelector.PickAudioStream(manifest)
+        var audioStream = QualitySelector.PickAudioStream(manifest, preferredContainer)
             ?? throw new InvalidOperationException("No suitable audio stream was found for this video.");
 
         await SetStatusAsync(db, item, JobItemStatus.Downloading, 0, ct);
@@ -143,6 +164,7 @@ public class DownloadWorker(
             DownloadFormat.Mp3 => "-codec:a libmp3lame -qscale:a 2",
             DownloadFormat.M4a => "-codec:a aac -b:a 192k",
             DownloadFormat.Wav => "-codec:a pcm_s16le",
+            DownloadFormat.Opus => "-codec:a libopus -b:a 160k",
             _ => throw new InvalidOperationException($"Unsupported audio format {item.Job.Format}"),
         };
         await RunFfmpegAsync($"-i \"{audioTemp}\" -y -vn {codecArgs} \"{finalPath}\"", ct);
@@ -236,7 +258,7 @@ public class DownloadWorker(
     {
         var psi = new ProcessStartInfo
         {
-            FileName = "ffmpeg",
+            FileName = _ffmpegPath,
             Arguments = arguments,
             RedirectStandardError = true,
             RedirectStandardOutput = true,

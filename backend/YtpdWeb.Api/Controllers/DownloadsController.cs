@@ -73,6 +73,28 @@ public class DownloadsController(
         return job is null ? NotFound() : Ok(ToDto(job));
     }
 
+    [HttpPost("{id:guid}/items/{itemId:guid}/cancel")]
+    public async Task<IActionResult> CancelItem(Guid id, Guid itemId, CancellationToken ct)
+    {
+        var item = await db.JobItems.FirstOrDefaultAsync(i => i.Id == itemId && i.JobId == id, ct);
+        if (item is null) return NotFound();
+
+        if (item.Status is JobItemStatus.Completed or JobItemStatus.Failed or JobItemStatus.Cancelled)
+            return NoContent();
+
+        // If it's already running, signal its token and let the worker record
+        // the Cancelled status itself once the operation actually unwinds.
+        // If it's still waiting in the queue, there's nothing to signal yet -
+        // mark it directly so the worker skips it when it's dequeued.
+        if (!queue.TryCancel(itemId) && item.Status == JobItemStatus.Queued)
+        {
+            item.Status = JobItemStatus.Cancelled;
+            await db.SaveChangesAsync(ct);
+        }
+
+        return NoContent();
+    }
+
     [HttpGet("{id:guid}/items/{itemId:guid}/file")]
     public async Task<IActionResult> GetFile(Guid id, Guid itemId, CancellationToken ct)
     {

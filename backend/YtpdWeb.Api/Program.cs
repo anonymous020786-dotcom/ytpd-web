@@ -19,6 +19,7 @@ var builder = WebApplication.CreateBuilder(args);
 var config = builder.Configuration;
 
 builder.Services.Configure<StorageOptions>(config.GetSection(StorageOptions.SectionName));
+builder.Services.Configure<FfmpegOptions>(config.GetSection(FfmpegOptions.SectionName));
 builder.Services.Configure<JwtOptions>(config.GetSection(JwtOptions.SectionName));
 builder.Services.Configure<AuthCredentialsOptions>(config.GetSection(AuthCredentialsOptions.SectionName));
 

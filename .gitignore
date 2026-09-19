@@ -11,8 +11,9 @@ frontend/.env*.local
 # env / secrets
 .env
 
-# runtime data
-data/
+# runtime data (local dev only - NOT "data/", which case-insensitively
+# collides with backend/YtpdWeb.Api/Data/ on Windows and would hide it)
+.rundata/
 *.db
 *.db-shm
 *.db-wal

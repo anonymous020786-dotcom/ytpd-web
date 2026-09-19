@@ -33,9 +33,9 @@ dotnet user-secrets set "Jwt:Secret" "$(openssl rand -base64 48)"
 dotnet user-secrets set "Auth:Username" "admin"
 dotnet run -- hash-password "your-password"   # prints a hash
 dotnet user-secrets set "Auth:PasswordHash" "<paste the hash>"
-dotnet user-secrets set "Storage:TempPath" "./data/temp"
-dotnet user-secrets set "Storage:DownloadsPath" "./data/downloads"
-dotnet user-secrets set "Database:Path" "./data/ytpd.db"
+dotnet user-secrets set "Storage:TempPath" "./.rundata/temp"
+dotnet user-secrets set "Storage:DownloadsPath" "./.rundata/downloads"
+dotnet user-secrets set "Database:Path" "./.rundata/ytpd.db"
 dotnet run
 ```
 

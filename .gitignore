@@ -1,0 +1,24 @@
+# dotnet
+backend/**/bin/
+backend/**/obj/
+
+# node / next.js
+frontend/node_modules/
+frontend/.next/
+frontend/out/
+frontend/.env*.local
+
+# env / secrets
+.env
+
+# runtime data
+data/
+*.db
+*.db-shm
+*.db-wal
+
+# OS / editor
+.vs/
+.vscode/
+.idea/
+Thumbs.db

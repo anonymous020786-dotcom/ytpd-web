@@ -1,0 +1,50 @@
+services:
+  api:
+    build: ./backend/YtpdWeb.Api
+    restart: unless-stopped
+    environment:
+      Jwt__Secret: ${JWT_SECRET:?set JWT_SECRET in .env}
+      Auth__Username: ${AUTH_USERNAME:?set AUTH_USERNAME in .env}
+      # Left optional (not `:?`) because generating this value requires
+      # running this same container first — see README "Deploying" step 4.
+      Auth__PasswordHash: ${AUTH_PASSWORD_HASH:-}
+      Cors__AllowedOrigin: https://${DOMAIN}
+    volumes:
+      - ytpd_data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/healthz"]
+      interval: 30s
+      timeout: 5s
+      start_period: 20s
+
+  web:
+    build:
+      context: ./frontend
+      args:
+        # Caddy proxies /api and /hubs on this same domain to the api
+        # container, so the frontend just talks to its own origin.
+        NEXT_PUBLIC_API_URL: https://${DOMAIN}
+    restart: unless-stopped
+    depends_on:
+      - api
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile
+      - caddy_data:/data
+      - caddy_config:/config
+    environment:
+      DOMAIN: ${DOMAIN}
+    depends_on:
+      - api
+      - web
+
+volumes:
+  ytpd_data:
+  caddy_data:
+  caddy_config:

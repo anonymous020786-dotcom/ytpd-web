@@ -172,10 +172,17 @@ UI uses. Disabled by default (`Telegram:BotToken` empty).
 
 **Why a self-hosted Bot API server**: the public `api.telegram.org` caps
 bot uploads at 50MB, useless for actual video files. Running
-`telegram-bot-api` (`github.com/tdlib/telegram-bot-api`) locally with
-`--local` raises that to 2GB and - since it shares the `api-data` volume
-with the `api` container - lets the bot hand it a `file://` URI to a file
-already on disk instead of re-uploading bytes over HTTP a second time.
+`telegram-bot-api` (`github.com/tdlib/telegram-bot-api`, via the
+`aiogram/telegram-bot-api` image) locally with `--local` raises that to
+2GB. It shares the `api-data` volume with the `api` container, which the
+upstream docs suggest lets you skip a real upload by passing a local path
+or `file://` URI directly - tried both live against this image and both
+get parsed as a remote URL and rejected ("invalid file HTTP URL
+specified"), so that optimization doesn't actually work here regardless
+of the docs. File delivery is a genuine multipart upload instead (one
+hop over the docker-internal network to `telegram-bot-api`, not over the
+real internet) - confirmed live: real file delivered with metadata
+intact.
 
 **Flow**: Telegram POSTs updates to `https://ytpd.videodownloaders.cloud/api/bot/webhook`
 (routed through the same Worker/Tunnel as everything else - no new

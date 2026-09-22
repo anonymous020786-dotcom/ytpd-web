@@ -303,6 +303,39 @@ can't be done from here):**
   (private repo) - not a priority for a solo-owner repo with no
   collaborators to protect against.
 
+## Cloudflare Access on the public site (2026-09-22)
+
+At the owner's request, `https://ytpd.videodownloaders.cloud` now
+requires a Cloudflare Access login (email one-time code to
+`anonymous020786@gmail.com`, no password) for everything - not just the
+internal `ytpd-origin` hostname from the security audit above.
+
+Two Access Applications, most-specific-path-wins:
+- `ytpd-web bot webhook (bypass)` - `ytpd.videodownloaders.cloud/api/bot/webhook`,
+  policy `bypass` (`everyone`). Telegram's servers POST here directly with
+  no browser, so they can never complete an interactive Access login -
+  this path skips Access entirely and relies on the existing secret-token
+  header check at the app layer (`Telegram:WebhookSecret`, see the bot
+  section above) instead.
+- `ytpd-web` - the whole hostname, policy: allow only
+  `anonymous020786@gmail.com`.
+
+Verified live: `GET /` on the root now 302s to
+`bold-waterfall-635d.cloudflareaccess.com` instead of loading the app;
+`POST /api/bot/webhook` with the correct secret header still returns 200
+directly, bypassing Access as intended. (Took about 30s to actually start
+enforcing after creation - Access policy propagation isn't instant.)
+
+**Known implication for the mobile app**: `ytpd-mobile`'s Capacitor
+WebView will now hit the same Access login page on first load, same as
+any browser would - it should complete fine (it's just a normal web page
+with an email-code form, no native OAuth needed), but hasn't been tested
+on a real device since this was added. If it doesn't work smoothly, the
+options are either accepting the one-time login inside the app, or
+carving out a mobile-specific bypass the way the bot webhook has one
+(harder to secure well, since unlike Telegram's servers a phone doesn't
+have a fixed, verifiable identity to bypass *for*).
+
 | Resource | ID/Name |
 |---|---|
 | EC2 instance | `i-03310166c27b0413a` |
@@ -319,6 +352,8 @@ can't be done from here):**
 | DNS (internal, tunnel origin) | `ytpd-origin.videodownloaders.cloud` |
 | DNS (public) | `ytpd.videodownloaders.cloud` (Worker custom domain) |
 | Cloudflare Access app | `ytpd-web internal origin` (protects `ytpd-origin.*`) |
+| Cloudflare Access app | `ytpd-web` (protects the public site, owner email only) |
+| Cloudflare Access app | `ytpd-web bot webhook (bypass)` (lets Telegram through) |
 | Cloudflare Access service token | `ytpd-worker-origin-access` |
 | Cloudflare rate limit rule | login throttle on `/api/auth/login` |
 | Supabase project | `hgeswxsxnzhfrzkqytuu` (org `ufagevmmfczcdvitlhfy`) |

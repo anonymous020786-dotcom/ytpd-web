@@ -7,6 +7,7 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
 {
     public DbSet<DownloadJob> Jobs => Set<DownloadJob>();
     public DbSet<DownloadJobItem> JobItems => Set<DownloadJobItem>();
+    public DbSet<TelegramAllowedUser> TelegramAllowedUsers => Set<TelegramAllowedUser>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -18,5 +19,7 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
 
         modelBuilder.Entity<DownloadJob>().Property(j => j.Format).HasConversion<string>();
         modelBuilder.Entity<DownloadJobItem>().Property(i => i.Status).HasConversion<string>();
+
+        modelBuilder.Entity<TelegramAllowedUser>().HasKey(u => u.ChatId);
     }
 }

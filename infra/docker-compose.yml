@@ -1,0 +1,44 @@
+# Deployed on the EC2 instance (i-03310166c27b0413a) via SSM, not part of
+# local dev (see ../backend and ../frontend for that). Three services:
+# api + web (the actual app) and cloudflared (the Tunnel connector that
+# makes them reachable - see ../README.md for the full architecture).
+#
+# Images are pulled from GHCR (built by CI in this repo), not built
+# on-instance - keeps the instance's boot-to-ready time short.
+services:
+  api:
+    image: ghcr.io/anonymous020786-dotcom/ytpd-web-api:latest
+    restart: unless-stopped
+    environment:
+      ConnectionStrings__Postgres: ${POSTGRES_CONNECTION_STRING}
+      Jwt__Secret: ${JWT_SECRET}
+      Jwt__Issuer: ytpd-web
+      Auth__Username: ${AUTH_USERNAME}
+      Auth__PasswordHash: ${AUTH_PASSWORD_HASH}
+      Cors__AllowedOrigin: https://ytpd.videodownloaders.cloud
+    volumes:
+      - api-data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/healthz"]
+      interval: 30s
+      timeout: 5s
+      start_period: 20s
+
+  web:
+    image: ghcr.io/anonymous020786-dotcom/ytpd-web-frontend:latest
+    restart: unless-stopped
+    depends_on:
+      - api
+
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    restart: unless-stopped
+    command: tunnel run
+    environment:
+      TUNNEL_TOKEN: ${TUNNEL_TOKEN}
+    depends_on:
+      - api
+      - web
+
+volumes:
+  api-data:

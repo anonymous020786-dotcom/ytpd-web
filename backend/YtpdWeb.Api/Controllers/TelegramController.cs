@@ -118,7 +118,6 @@ public class TelegramController(
 
         var video = resolved.Items[0];
         var token = pending.Add(new PendingVideo(video.VideoId, video.Title, video.Author, text, DateTimeOffset.UtcNow));
-        logger.LogInformation("DIAG pending token {Token}", token);
 
         var keyboard = new TgInlineKeyboardMarkup(new List<List<TgInlineKeyboardButton>>
         {
@@ -135,7 +134,15 @@ public class TelegramController(
 
     private async Task HandleCallbackAsync(TgCallbackQuery callback, CancellationToken ct)
     {
-        await telegram.AnswerCallbackQueryAsync(callback.Id, ct: ct);
+        // Best-effort: this just stops the button's loading spinner in the
+        // Telegram client, it's not load-bearing for the download itself.
+        // Found live while testing: it used to run unguarded as the first
+        // line, so if Telegram ever rejected it (e.g. an expired query ID),
+        // the exception aborted the whole handler before the job was ever
+        // created - a transient hiccup here silently killed the download
+        // with no job, no error shown to the user, nothing.
+        try { await telegram.AnswerCallbackQueryAsync(callback.Id, ct: ct); }
+        catch (Exception ex) { logger.LogWarning(ex, "answerCallbackQuery failed, continuing anyway"); }
 
         if (callback.Message is null) return;
         var chatId = callback.Message.Chat.Id;

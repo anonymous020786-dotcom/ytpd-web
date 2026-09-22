@@ -23,9 +23,23 @@ builder.Services.Configure<FfmpegOptions>(config.GetSection(FfmpegOptions.Sectio
 builder.Services.Configure<JwtOptions>(config.GetSection(JwtOptions.SectionName));
 builder.Services.Configure<AuthCredentialsOptions>(config.GetSection(AuthCredentialsOptions.SectionName));
 
-var dbPath = config["Database:Path"] ?? "/data/ytpd.db";
-Directory.CreateDirectory(Path.GetDirectoryName(dbPath)!);
-builder.Services.AddDbContext<AppDbContext>(opt => opt.UseSqlite($"Data Source={dbPath}"));
+// Desktop (local sidecar, offline-capable) always uses SQLite via
+// Database:Path. Hosted web deployments set ConnectionStrings:Postgres
+// instead (e.g. a Supabase connection string) to get a real managed DB
+// that survives server rebuilds - same AppDbContext, same migrations,
+// just a different provider picked at startup.
+var postgresConnectionString = config["ConnectionStrings:Postgres"];
+var usingPostgres = !string.IsNullOrWhiteSpace(postgresConnectionString);
+if (usingPostgres)
+{
+    builder.Services.AddDbContext<AppDbContext>(opt => opt.UseNpgsql(postgresConnectionString));
+}
+else
+{
+    var dbPath = config["Database:Path"] ?? "/data/ytpd.db";
+    Directory.CreateDirectory(Path.GetDirectoryName(dbPath)!);
+    builder.Services.AddDbContext<AppDbContext>(opt => opt.UseSqlite($"Data Source={dbPath}"));
+}
 
 builder.Services.AddSingleton<DownloadQueue>();
 builder.Services.AddSingleton<YoutubeResolverService>();
@@ -84,7 +98,15 @@ var app = builder.Build();
 using (var scope = app.Services.CreateScope())
 {
     var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-    db.Database.EnsureCreated();
+    // Postgres (hosted): the target database (e.g. Supabase's "postgres")
+    // already exists before we ever connect, so EnsureCreated() would see
+    // "database exists" and stop there without creating our tables at all.
+    // Migrate() actually checks/applies the schema itself.
+    // SQLite (desktop): the .db file genuinely doesn't exist on first run,
+    // so EnsureCreated() creating it from the model directly is simpler and
+    // already proven - no migrations tracked for that provider.
+    if (usingPostgres) db.Database.Migrate();
+    else db.Database.EnsureCreated();
 }
 
 if (app.Environment.IsDevelopment())

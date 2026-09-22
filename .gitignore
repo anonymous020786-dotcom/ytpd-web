@@ -11,6 +11,10 @@ frontend/.env*.local
 # env / secrets
 .env
 
+# local machine's MCP server config (references a local AWS profile name,
+# not committed since other clones/machines will have their own)
+/.mcp.json
+
 # desktop/ is its own separate repo (ytpd-desktop), not part of this one
 /desktop/
 

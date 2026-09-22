@@ -100,10 +100,14 @@ this needs to change - it's just an extra permission statement.
 
 - **Tunnel** `ytpd-web` (`a147301c-c42e-4ad4-96a0-d0ffea60411a`), remotely
   managed config. Ingress: `ytpd-origin.videodownloaders.cloud` routes
-  `/api/*` and `/hubs/*` to `http://localhost:8080` (the API container)
-  and everything else to `http://localhost:3000` (the web container).
-  `ytpd-origin.*` is an internal-only DNS name (CNAME to
-  `<tunnel>.cfargotunnel.com`, proxied) - never given to users directly.
+  `/api/*` and `/hubs/*` to `http://api:8080` and everything else to
+  `http://web:3000` - the docker-compose *service names*, not `localhost`.
+  cloudflared runs as its own container with its own network namespace, so
+  `localhost` there means "the cloudflared container itself"; pointing
+  ingress at `localhost:PORT` looked reasonable but silently couldn't
+  reach the app containers at all ("connection refused" in cloudflared's
+  logs) until fixed. `ytpd-origin.*` is an internal-only DNS name (CNAME
+  to `<tunnel>.cfargotunnel.com`, proxied) - never given to users directly.
 - **Worker** `ytpd-worker` (`infra/worker/ytpd-worker.js`) - the public
   entrypoint. Proxies to `ytpd-origin.*`; on a network error or a
   tunnel-down response (502/521/522/523/524/530 - 530/error 1033 is what
@@ -126,23 +130,38 @@ this needs to change - it's just an extra permission statement.
   up" page, and the instance transitioned to `running` shortly after -
   confirmed via `describe_instances`, not just log output.
 
-## What's still pending
+## Fully deployed and verified end-to-end (2026-09-22)
 
-- **Postgres connection string for the app** - needs the `ytpd_app` role's
-  password reset (superuser role itself can't be altered directly, see
-  above); this is a `ALTER ROLE ... WITH PASSWORD` statement, held for
-  explicit user confirmation before running.
-- **GHCR image pull access** - `ytpd-web-api`/`ytpd-web-frontend` images
-  are built by `.github/workflows/build-images.yml` and pushed to GHCR
-  (verified: both built successfully). The `ytpd-web` GitHub repo is
-  private, so the packages default to private too - the EC2 instance
-  needs either those packages made public, or a GitHub token installed on
-  the instance for `docker login ghcr.io`. Held for explicit user
-  confirmation before making anything public.
-- **Actually running `docker compose up` on the instance** - `infra/docker-compose.yml`
-  and `infra/deploy.sh` are ready; blocked only on the two items above
-  (the `.env` file they need can't be finalized without the Postgres
-  password).
+The whole stack is live at **https://ytpd.videodownloaders.cloud** and every
+layer has been tested against the real, running system (not just read
+back from logs):
+
+- `POSTGRES_CONNECTION_STRING` uses the Supavisor pooler
+  (`aws-0-ap-south-1.pooler.supabase.com:5432`, username
+  `ytpd_app.hgeswxsxnzhfrzkqytuu`), not the direct `db.<ref>.supabase.co`
+  hostname. The direct hostname resolves to IPv6 only, and this EC2
+  instance's VPC has no outbound IPv6 route - the API container crash-
+  looped with `Network is unreachable` until this was fixed. See
+  `.env.example` for the full explanation.
+- GHCR packages `ytpd-web-api`/`ytpd-web-frontend` are public (changed via
+  the GitHub web UI - there is no REST API for package visibility).
+  `docker compose pull` on the instance needs no credentials as a result.
+- Verified live: `GET /` returns real rendered frontend HTML; `POST
+  /api/auth/login` issues a real JWT; an authenticated `GET
+  /api/downloads` call round-trips through the API, the Supavisor pooler,
+  and Postgres and returns `[]`; `public.Jobs`/`public.JobItems` exist in
+  Supabase with the EF Core migration history recorded.
+- Login credentials for the hosted app: username `admin`, password
+  handed to the user directly (not stored in this repo or in any `.tmp`
+  file beyond `infra/app_secrets.tmp`, which is gitignored).
+- RLS is disabled on `Jobs`/`JobItems`/`__EFMigrationsHistory` (Supabase
+  advisor flagged this). Confirmed **not** currently exploitable: `anon`
+  and `authenticated` have zero grants on these tables (checked via
+  `information_schema.role_table_grants`), so Supabase's PostgREST data
+  API can't reach them regardless of RLS. This app doesn't use Supabase's
+  client libraries/Data API at all - it's a plain Npgsql connection from
+  the `ytpd_app` role - so enabling RLS isn't actually needed here, only
+  worth knowing about if that ever changes.
 
 ## Resource inventory (for cleanup/reference)
 

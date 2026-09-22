@@ -1,4 +1,6 @@
 using System.Net.Http.Json;
+using System.Text.Json;
+using System.Text.Json.Serialization;
 using Microsoft.Extensions.Options;
 
 namespace YtpdWeb.Api.Bot;
@@ -8,6 +10,17 @@ namespace YtpdWeb.Api.Bot;
 // TelegramOptions for why. Only the handful of methods this bot needs.
 public class TelegramClient(HttpClient http, IOptions<TelegramOptions> options)
 {
+    // The local Bot API server rejects `"field": null` outright ("Bad
+    // Request: object expected as reply markup") instead of treating it
+    // like an omitted field the way api.telegram.org does - confirmed
+    // live. Every optional field here (reply_markup, callback text, ...)
+    // needs to disappear from the JSON entirely when unset, not serialize
+    // as null.
+    private static readonly JsonSerializerOptions JsonOptions = new()
+    {
+        DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
+    };
+
     private readonly TelegramOptions _opts = options.Value;
     private string BaseUrl => $"{_opts.ApiBaseUrl.TrimEnd('/')}/bot{_opts.BotToken}";
 
@@ -32,7 +45,11 @@ public class TelegramClient(HttpClient http, IOptions<TelegramOptions> options)
 
     private async Task PostAsync(string method, object body, CancellationToken ct)
     {
-        var resp = await http.PostAsJsonAsync($"{BaseUrl}/{method}", body, ct);
-        resp.EnsureSuccessStatusCode();
+        var resp = await http.PostAsJsonAsync($"{BaseUrl}/{method}", body, JsonOptions, ct);
+        if (!resp.IsSuccessStatusCode)
+        {
+            var responseBody = await resp.Content.ReadAsStringAsync(ct);
+            throw new HttpRequestException($"Telegram {method} failed ({(int)resp.StatusCode}): {responseBody}");
+        }
     }
 }

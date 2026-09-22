@@ -117,7 +117,7 @@ public class TelegramController(
         }
 
         var video = resolved.Items[0];
-        var token = pending.Add(new PendingVideo(video.VideoId, video.Title, video.Author, text, DateTimeOffset.UtcNow));
+        var token = pending.Add(new PendingVideo(video.VideoId, video.Title, video.Author, text, DateTimeOffset.UtcNow, video.AvailableVideoQualities));
 
         var keyboard = new TgInlineKeyboardMarkup(new List<List<TgInlineKeyboardButton>>
         {
@@ -151,26 +151,66 @@ public class TelegramController(
         if (!IsAdmin(chatId) && !await IsApprovedAsync(chatId, ct)) return;
 
         var parts = (callback.Data ?? "").Split(':');
-        if (parts.Length != 3 || parts[0] != "dl" || !pending.TryGet(parts[1], out var video))
+        if (parts.Length != 3 || !pending.TryGet(parts[1], out var video))
         {
-            await telegram.EditMessageTextAsync(chatId, messageId, "⌛ This link expired - paste the URL again.", ct);
+            await telegram.EditMessageTextAsync(chatId, messageId, "⌛ This link expired - paste the URL again.", ct: ct);
             return;
         }
 
-        var formatCode = parts[2];
-        var format = formatCode switch
+        if (parts[0] == "dl")
         {
-            "mp4" => DownloadFormat.Mp4,
-            "mp3" => DownloadFormat.Mp3,
-            "m4a" => DownloadFormat.M4a,
-            _ => DownloadFormat.Mp4,
-        };
+            var formatCode = parts[2];
 
+            // MP4 needs one more step - which resolution? Audio formats have
+            // no meaningful quality tiers (DownloadWorker always picks the
+            // best audio stream regardless of the job's Quality field), so
+            // those skip straight to creating the job.
+            if (formatCode == "mp4")
+            {
+                if (video.AvailableVideoQualities.Count == 0)
+                {
+                    // Manifest lookup failed at resolve time (see
+                    // YoutubeResolverService) - degrade gracefully to the
+                    // old behavior instead of showing an empty picker.
+                    await CreateAndTrackJobAsync(chatId, messageId, video, DownloadFormat.Mp4, "best", ct);
+                    return;
+                }
+
+                var qualityButtons = video.AvailableVideoQualities
+                    .Select(h => new TgInlineKeyboardButton($"{h}p", $"dlq:{parts[1]}:{h}p"))
+                    .Chunk(3)
+                    .Select(row => row.ToList())
+                    .ToList();
+
+                await telegram.EditMessageTextAsync(chatId, messageId,
+                    $"🎥 <b>{System.Net.WebUtility.HtmlEncode(video.Title)}</b>\n\nPick a resolution:",
+                    new TgInlineKeyboardMarkup(qualityButtons), ct);
+                return;
+            }
+
+            var format = formatCode switch
+            {
+                "mp3" => DownloadFormat.Mp3,
+                "m4a" => DownloadFormat.M4a,
+                _ => DownloadFormat.Mp4,
+            };
+            await CreateAndTrackJobAsync(chatId, messageId, video, format, "best", ct);
+            return;
+        }
+
+        if (parts[0] == "dlq")
+        {
+            await CreateAndTrackJobAsync(chatId, messageId, video, DownloadFormat.Mp4, parts[2], ct);
+        }
+    }
+
+    private async Task CreateAndTrackJobAsync(long chatId, long messageId, PendingVideo video, DownloadFormat format, string quality, CancellationToken ct)
+    {
         var job = new DownloadJob
         {
             SourceUrl = video.SourceUrl,
             Format = format,
-            Quality = "best",
+            Quality = quality,
             EmbedMetadata = true,
         };
         var item = new DownloadJobItem
@@ -187,7 +227,7 @@ public class TelegramController(
         await db.SaveChangesAsync(ct);
         await queue.EnqueueAsync(item.Id, ct);
 
-        await telegram.EditMessageTextAsync(chatId, messageId, $"⏳ Downloading <b>{System.Net.WebUtility.HtmlEncode(video.Title)}</b>...", ct);
+        await telegram.EditMessageTextAsync(chatId, messageId, $"⏳ Downloading <b>{System.Net.WebUtility.HtmlEncode(video.Title)}</b>...", ct: ct);
 
         // The webhook request scope ends the moment this method returns (it
         // already answered Telegram above) - this needs its own scope to

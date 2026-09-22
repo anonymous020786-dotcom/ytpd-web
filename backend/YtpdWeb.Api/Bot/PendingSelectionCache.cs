@@ -2,7 +2,10 @@ using System.Collections.Concurrent;
 
 namespace YtpdWeb.Api.Bot;
 
-public record PendingVideo(string VideoId, string Title, string Author, string SourceUrl, DateTimeOffset CreatedAt);
+public record PendingVideo(
+    string VideoId, string Title, string Author, string SourceUrl, DateTimeOffset CreatedAt,
+    List<int> AvailableVideoQualities
+);
 
 // Telegram's callback_data is capped at 64 bytes, far too small for a video's
 // title/author/URL - so buttons carry only a short token, and the actual

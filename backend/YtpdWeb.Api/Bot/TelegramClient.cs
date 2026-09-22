@@ -27,8 +27,8 @@ public class TelegramClient(HttpClient http, IOptions<TelegramOptions> options)
     public Task SendMessageAsync(long chatId, string text, TgInlineKeyboardMarkup? keyboard = null, CancellationToken ct = default) =>
         PostAsync("sendMessage", new { chat_id = chatId, text, reply_markup = keyboard, parse_mode = "HTML" }, ct);
 
-    public Task EditMessageTextAsync(long chatId, long messageId, string text, CancellationToken ct = default) =>
-        PostAsync("editMessageText", new { chat_id = chatId, message_id = messageId, text, parse_mode = "HTML" }, ct);
+    public Task EditMessageTextAsync(long chatId, long messageId, string text, TgInlineKeyboardMarkup? keyboard = null, CancellationToken ct = default) =>
+        PostAsync("editMessageText", new { chat_id = chatId, message_id = messageId, text, reply_markup = keyboard, parse_mode = "HTML" }, ct);
 
     public Task AnswerCallbackQueryAsync(string callbackQueryId, string? text = null, CancellationToken ct = default) =>
         PostAsync("answerCallbackQuery", new { callback_query_id = callbackQueryId, text }, ct);

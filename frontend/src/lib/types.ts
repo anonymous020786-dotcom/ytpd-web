@@ -4,6 +4,9 @@ export type ResolvedVideo = {
   author: string;
   thumbnailUrl: string;
   durationSeconds: number | null;
+  // Real available video heights (e.g. [1080, 720, 480]), highest first.
+  // Only populated for a single-video resolve - see ResolvedVideoDto.
+  availableVideoQualities: number[];
 };
 
 export type ResolveResponse = {

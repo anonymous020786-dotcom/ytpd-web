@@ -32,6 +32,24 @@ public class YoutubeResolverService
         if (UrlParsing.TryParseVideoId(url, out var videoId))
         {
             var video = await Client.Videos.GetAsync(videoId, ct);
+
+            // Extra round-trip vs. the playlist/channel paths, but this is
+            // the one place it's worth it: a single video's actual
+            // available resolutions, not a generic guess. Best-effort - if
+            // it fails for any reason, still return the video itself
+            // rather than losing the whole resolve over a quality lookup.
+            var qualities = new List<int>();
+            try
+            {
+                var manifest = await Client.Videos.Streams.GetManifestAsync(videoId, ct);
+                qualities = manifest.GetVideoOnlyStreams()
+                    .Select(s => s.VideoQuality.MaxHeight)
+                    .Distinct()
+                    .OrderByDescending(h => h)
+                    .ToList();
+            }
+            catch { /* fall back to an empty list - callers use a generic list instead */ }
+
             return new ResolveResponseDto(
                 "Video",
                 video.Title,
@@ -41,7 +59,7 @@ public class YoutubeResolverService
                 {
                     new(video.Id.Value, video.Title, video.Author.ChannelTitle,
                         video.Thumbnails.TryGetWithHighestResolution()?.Url ?? "",
-                        video.Duration?.TotalSeconds),
+                        video.Duration?.TotalSeconds, qualities),
                 },
                 false
             );
@@ -69,7 +87,8 @@ public class YoutubeResolverService
                 video.Title,
                 video.Author.ChannelTitle,
                 video.Thumbnails.TryGetWithHighestResolution()?.Url ?? "",
-                video.Duration?.TotalSeconds
+                video.Duration?.TotalSeconds,
+                []
             ));
         }
 
@@ -101,7 +120,8 @@ public class YoutubeResolverService
                 video.Title,
                 video.Author.ChannelTitle,
                 video.Thumbnails.TryGetWithHighestResolution()?.Url ?? "",
-                video.Duration?.TotalSeconds
+                video.Duration?.TotalSeconds,
+                []
             ));
         }
 

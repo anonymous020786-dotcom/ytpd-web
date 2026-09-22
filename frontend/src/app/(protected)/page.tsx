@@ -37,6 +37,18 @@ export default function DashboardPage() {
 
   const isVideoFormat = VIDEO_FORMATS.includes(format);
 
+  // A single-video resolve carries its own real available resolutions
+  // (see ResolvedVideoDto); anything else (playlist/channel, or a video
+  // whose manifest lookup failed) falls back to a generic list, since the
+  // job's quality picker is one global choice applied to every selected
+  // item - fetching a real manifest per item would be far too slow.
+  const singleVideoQualities =
+    result?.kind === "Video" ? (result.items[0]?.availableVideoQualities ?? []) : [];
+  const qualityOptions =
+    singleVideoQualities.length > 0
+      ? ["best", ...singleVideoQualities.map((h) => `${h}p`)]
+      : QUALITIES;
+
   async function handleResolve() {
     if (!url.trim()) return;
     setIsResolving(true);
@@ -46,6 +58,10 @@ export default function DashboardPage() {
       const res = await api.resolve(url.trim());
       setResult(res);
       setSelected(new Set(res.items.map((i) => i.videoId)));
+      // Each resolve can carry a different real quality list (or none at
+      // all, for a playlist/channel) - a quality picked for a previous
+      // video might not exist here.
+      setQuality("best");
     } catch (err) {
       toast.error(err instanceof ApiError ? err.message : "Could not resolve that URL.");
     } finally {
@@ -178,7 +194,7 @@ export default function DashboardPage() {
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
-                      {QUALITIES.map((q) => (
+                      {qualityOptions.map((q) => (
                         <SelectItem key={q} value={q}>
                           {q === "best" ? "Best" : q}
                         </SelectItem>

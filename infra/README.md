@@ -96,23 +96,53 @@ Fixes:
 If AWS lifts these restrictions as the account ages/gets used, none of
 this needs to change - it's just an extra permission statement.
 
+## What's built and verified (Cloudflare side)
+
+- **Tunnel** `ytpd-web` (`a147301c-c42e-4ad4-96a0-d0ffea60411a`), remotely
+  managed config. Ingress: `ytpd-origin.videodownloaders.cloud` routes
+  `/api/*` and `/hubs/*` to `http://localhost:8080` (the API container)
+  and everything else to `http://localhost:3000` (the web container).
+  `ytpd-origin.*` is an internal-only DNS name (CNAME to
+  `<tunnel>.cfargotunnel.com`, proxied) - never given to users directly.
+- **Worker** `ytpd-worker` (`infra/worker/ytpd-worker.js`) - the public
+  entrypoint. Proxies to `ytpd-origin.*`; on a network error or a
+  tunnel-down response (502/521/522/523/524/530 - 530/error 1033 is what
+  an actually-disconnected Tunnel returns, confirmed live) it invokes the
+  wake Lambda (SigV4-signed with the `ytpd-worker` IAM credentials, set as
+  Worker secrets `AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY`) and returns
+  a self-refreshing "waking up" page.
+- **Routing gotcha hit and solved**: this Cloudflare account is shared
+  with other existing projects on `videodownloaders.cloud` (an existing
+  wildcard zone-level Worker Route `*.videodownloaders.cloud/*` ->
+  `mediadl-wake-shield`, unrelated to this project). That wildcard was
+  silently shadowing `ytpd.videodownloaders.cloud` even with a Custom
+  Domain attached for `ytpd-worker`. Fixed by adding a specific route
+  `ytpd.videodownloaders.cloud/*` -> `ytpd-worker` (Routes-vs-Routes
+  precedence is well-defined: most specific pattern wins - this is the
+  same mechanism the existing project already relies on, so it wasn't
+  touched). The Custom Domain binding was left in place too; harmless.
+- **Verified end-to-end for real**: with the EC2 instance stopped, a real
+  HTTPS request to `https://ytpd.videodownloaders.cloud/` got the "waking
+  up" page, and the instance transitioned to `running` shortly after -
+  confirmed via `describe_instances`, not just log output.
+
 ## What's still pending
 
-- **Cloudflare Tunnel + Worker** - blocked on the `cloudflare` MCP
-  connection here needing re-authorization (OAuth, can't be done from a
-  non-interactive session - see main conversation). Once reconnected:
-  1. Create a tunnel (`cloudflared tunnel create ytpd-web`), route
-     `ytpd.videodownloaders.cloud` to it.
-  2. Deploy a Worker that proxies to the tunnel and calls the wake Lambda
-     on failure (using the `ytpd-worker` credentials below).
-- **Actual app deployment onto the EC2 instance** - docker-compose.yml,
-  `.env` with the Supabase connection string / JWT secret / etc., pushed
-  via SSM `send-command` (not committed to this repo - see `../.env.example`
-  pattern already used for the desktop/Docker Compose setup).
-- **`ytpd-worker` AWS credentials** for the Worker to use - generated but
-  not yet embedded anywhere (not in this repo, not in git - see the
-  conversation where they were created). Will be set as a Cloudflare
-  Worker secret once the Worker exists, never checked into source.
+- **Postgres connection string for the app** - needs the `ytpd_app` role's
+  password reset (superuser role itself can't be altered directly, see
+  above); this is a `ALTER ROLE ... WITH PASSWORD` statement, held for
+  explicit user confirmation before running.
+- **GHCR image pull access** - `ytpd-web-api`/`ytpd-web-frontend` images
+  are built by `.github/workflows/build-images.yml` and pushed to GHCR
+  (verified: both built successfully). The `ytpd-web` GitHub repo is
+  private, so the packages default to private too - the EC2 instance
+  needs either those packages made public, or a GitHub token installed on
+  the instance for `docker login ghcr.io`. Held for explicit user
+  confirmation before making anything public.
+- **Actually running `docker compose up` on the instance** - `infra/docker-compose.yml`
+  and `infra/deploy.sh` are ready; blocked only on the two items above
+  (the `.env` file they need can't be finalized without the Postgres
+  password).
 
 ## Resource inventory (for cleanup/reference)
 
@@ -126,4 +156,9 @@ this needs to change - it's just an extra permission statement.
 | Lambda | `ytpd-start-instance` |
 | Lambda | `ytpd-stop-if-idle` |
 | EventBridge rule | `ytpd-stop-if-idle-schedule` (rate: 10 minutes) |
+| Cloudflare Tunnel | `ytpd-web` (`a147301c-c42e-4ad4-96a0-d0ffea60411a`) |
+| Cloudflare Worker | `ytpd-worker` |
+| Cloudflare Worker route | `ytpd.videodownloaders.cloud/*` -> `ytpd-worker` |
+| DNS (internal, tunnel origin) | `ytpd-origin.videodownloaders.cloud` |
+| DNS (public) | `ytpd.videodownloaders.cloud` (Worker custom domain) |
 | Supabase project | `hgeswxsxnzhfrzkqytuu` (org `ufagevmmfczcdvitlhfy`) |

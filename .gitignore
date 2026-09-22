@@ -10,6 +10,8 @@ frontend/.env*.local
 
 # env / secrets
 .env
+infra/*.tmp
+infra/**/function.zip
 
 # local machine's MCP server config (references a local AWS profile name,
 # not committed since other clones/machines will have their own)

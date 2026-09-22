@@ -14,6 +14,9 @@
  * ../worker_aws_key.tmp, which is gitignored):
  *   AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY  - the ytpd-worker IAM user,
  *     scoped to lambda:InvokeFunction on just ytpd-start-instance.
+ *   CF_ACCESS_CLIENT_ID, CF_ACCESS_CLIENT_SECRET - a Cloudflare Access
+ *     service token, the only thing allowed through Access's policy on
+ *     ytpd-origin.videodownloaders.cloud (see ../README.md "security").
  *
  * No template literals are used in this file on purpose - it's deployed
  * by embedding this source as a string inside another script (see
@@ -45,6 +48,13 @@ export default {
 
     var originRequest = new Request(originUrl, request);
     originRequest.headers.set("Host", ORIGIN_HOST);
+    // ytpd-origin sits behind Cloudflare Access (service-token-only policy,
+    // no interactive login) - direct requests without these get a 403 from
+    // Access itself, confirmed live. Without this, anyone who found the
+    // hostname (e.g. via public Certificate Transparency logs) could hit
+    // the backend directly, bypassing this Worker entirely.
+    originRequest.headers.set("CF-Access-Client-Id", env.CF_ACCESS_CLIENT_ID);
+    originRequest.headers.set("CF-Access-Client-Secret", env.CF_ACCESS_CLIENT_SECRET);
 
     try {
       var response = await fetchWithTimeout(originRequest, ORIGIN_TIMEOUT_MS);

@@ -224,6 +224,78 @@ in practice a message sent to a sleeping bot often just works a few
 seconds later - but the honest fallback is: if the bot doesn't respond,
 resend once the instance has had ~30-60s to wake up.
 
+## Security audit (2026-09-22)
+
+A real pass across AWS, Cloudflare, Supabase, and GitHub - not just a
+checklist. What was checked, what was fixed, and what's a conscious
+tradeoff:
+
+**Fixed:**
+- **Internal origin was actually publicly reachable.** `ytpd-origin.videodownloaders.cloud`
+  was a normal proxied DNS record - "internal" only by convention, not
+  enforcement. Anyone who found it (it's logged in public Certificate
+  Transparency logs, so "hidden" was never real protection) could hit the
+  backend directly, bypassing the Worker's wake logic and any future
+  Cloudflare-level protections entirely. Confirmed live: a direct `curl`
+  reached the app with no Worker involved.
+  Fixed by putting it behind **Cloudflare Access** with a service-token-only
+  policy (`decision: non_identity` - no interactive login offered at all),
+  matching the pattern this account already uses for two other projects
+  (`app.videodownloaders.cloud`, `staging.dlcardgenerator.in`). The Worker
+  now sends `CF-Access-Client-Id`/`CF-Access-Client-Secret` (a dedicated
+  service token, `ytpd-worker-origin-access`) on every origin fetch.
+  Verified live: direct requests to `ytpd-origin.*` now get a 403 from
+  Access itself; the public hostname (through the Worker) still works.
+- **RLS was disabled** on all four Postgres tables. Confirmed it wasn't
+  currently exploitable (`anon`/`authenticated` had zero grants, so
+  Supabase's PostgREST couldn't reach them regardless), but enabled it
+  anyway as defense-in-depth against a future accidental `GRANT`. Verified
+  safe first: `ytpd_app` (the app's connection role) owns all four tables,
+  and Postgres never applies RLS to a table's owner by default - so this
+  has zero effect on the running app (confirmed: login + an authenticated
+  DB query both still worked immediately after).
+- **No rate limiting existed anywhere on the zone.** Added a Cloudflare
+  rate-limit rule scoped only to `ytpd.videodownloaders.cloud`'s
+  `/api/auth/login` (5 requests / 10s per IP, the free plan's only
+  allowed period - it doesn't touch other projects' traffic). Not a
+  strong brute-force defense on its own, but the actual defense is the
+  20-character random admin password; this just adds friction.
+- **GitHub Dependabot alerts were off** on all three repos
+  (`ytpd-web`, `ytpd-desktop`, `ytpd-mobile`) - free, no downside, now on.
+
+**Checked and already fine:**
+- EC2 security group has zero inbound rules (confirmed again); the
+  instance does have a public IP, but nothing is reachable on it - Docker
+  publishes no ports to the host, and the SG blocks everything anyway.
+  Only path in is the outbound-only Cloudflare Tunnel.
+- No SSH - management is SSM Session Manager only.
+- IAM: `ytpd-worker` (used by the Worker) is scoped to exactly
+  `lambda:InvokeFunction` on one function. `ytpd-lambda-role`'s EC2
+  control policy is tag-conditioned. No console passwords on either IAM
+  user (API keys only). No S3 buckets in the account.
+
+**Known tradeoffs, not fixed (need your call, or need you personally -
+can't be done from here):**
+- **`ytpd-deploy` (the admin IAM user used for all deployment work) has
+  no MFA.** Root does have MFA. Setting up MFA on an IAM user needs a
+  live authenticator-app scan, which has to happen on your end -
+  `aws iam create-virtual-mfa-device` gets you the QR seed, then you'd
+  scan it and give me two consecutive TOTP codes to call
+  `enable-mfa-device`. Worth doing given this key has `AdministratorAccess`.
+- **No CloudTrail trail.** Zero audit logging beyond AWS's own 90-day
+  Event History. A basic trail has a small ongoing S3 cost - didn't
+  enable it unasked given the project's cost-consciousness; say the word
+  and I will.
+- **Zone-wide TLS settings weren't changed**: "Always Use HTTPS" is off
+  and minimum TLS is 1.0 for the whole `videodownloaders.cloud` zone -
+  both would be safe modern defaults, but they're zone-wide and this zone
+  is shared with your other projects (`chat`, `app`, `staging.dlcardgenerator.in`),
+  which I haven't tested against a TLS 1.2 floor. Didn't want to touch
+  shared settings without asking first.
+- **Branch protection isn't available** on `ytpd-web` without GitHub Pro
+  (private repo) - not a priority for a solo-owner repo with no
+  collaborators to protect against.
+
 | Resource | ID/Name |
 |---|---|
 | EC2 instance | `i-03310166c27b0413a` |
@@ -239,4 +311,7 @@ resend once the instance has had ~30-60s to wake up.
 | Cloudflare Worker route | `ytpd.videodownloaders.cloud/*` -> `ytpd-worker` |
 | DNS (internal, tunnel origin) | `ytpd-origin.videodownloaders.cloud` |
 | DNS (public) | `ytpd.videodownloaders.cloud` (Worker custom domain) |
+| Cloudflare Access app | `ytpd-web internal origin` (protects `ytpd-origin.*`) |
+| Cloudflare Access service token | `ytpd-worker-origin-access` |
+| Cloudflare rate limit rule | login throttle on `/api/auth/login` |
 | Supabase project | `hgeswxsxnzhfrzkqytuu` (org `ufagevmmfczcdvitlhfy`) |

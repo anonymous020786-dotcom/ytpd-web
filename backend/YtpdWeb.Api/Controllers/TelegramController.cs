@@ -118,6 +118,7 @@ public class TelegramController(
 
         var video = resolved.Items[0];
         var token = pending.Add(new PendingVideo(video.VideoId, video.Title, video.Author, text, DateTimeOffset.UtcNow));
+        logger.LogInformation("DIAG pending token {Token}", token);
 
         var keyboard = new TgInlineKeyboardMarkup(new List<List<TgInlineKeyboardButton>>
         {

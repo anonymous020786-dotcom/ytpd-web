@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
 using YtpdWeb.Api.Auth;
+using YtpdWeb.Api.Bot;
 using YtpdWeb.Api.Data;
 using YtpdWeb.Api.Hubs;
 using YtpdWeb.Api.Services;
@@ -22,6 +23,9 @@ builder.Services.Configure<StorageOptions>(config.GetSection(StorageOptions.Sect
 builder.Services.Configure<FfmpegOptions>(config.GetSection(FfmpegOptions.SectionName));
 builder.Services.Configure<JwtOptions>(config.GetSection(JwtOptions.SectionName));
 builder.Services.Configure<AuthCredentialsOptions>(config.GetSection(AuthCredentialsOptions.SectionName));
+builder.Services.Configure<TelegramOptions>(config.GetSection(TelegramOptions.SectionName));
+builder.Services.AddHttpClient<TelegramClient>();
+builder.Services.AddSingleton<PendingSelectionCache>();
 
 // Desktop (local sidecar, offline-capable) always uses SQLite via
 // Database:Path. Hosted web deployments set ConnectionStrings:Postgres

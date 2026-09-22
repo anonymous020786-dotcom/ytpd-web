@@ -1,7 +1,8 @@
 # Deployed on the EC2 instance (i-03310166c27b0413a) via SSM, not part of
-# local dev (see ../backend and ../frontend for that). Three services:
-# api + web (the actual app) and cloudflared (the Tunnel connector that
-# makes them reachable - see ../README.md for the full architecture).
+# local dev (see ../backend and ../frontend for that). Services: api + web
+# (the actual app), cloudflared (the Tunnel connector that makes them
+# reachable), and telegram-bot-api (self-hosted Bot API server, only used
+# if Telegram__BotToken is set - see ../README.md for the full architecture).
 #
 # Images are pulled from GHCR (built by CI in this repo), not built
 # on-instance - keeps the instance's boot-to-ready time short.
@@ -16,6 +17,10 @@ services:
       Auth__Username: ${AUTH_USERNAME}
       Auth__PasswordHash: ${AUTH_PASSWORD_HASH}
       Cors__AllowedOrigin: https://ytpd.videodownloaders.cloud
+      Telegram__BotToken: ${TELEGRAM_BOT_TOKEN:-}
+      Telegram__WebhookSecret: ${TELEGRAM_WEBHOOK_SECRET:-}
+      Telegram__ApiBaseUrl: http://telegram-bot-api:8081
+      Telegram__AllowedChatIds: ${TELEGRAM_ALLOWED_CHAT_IDS:-}
     volumes:
       - api-data:/data
     healthcheck:
@@ -30,6 +35,26 @@ services:
     depends_on:
       - api
 
+  # Self-hosted Bot API server (github.com/tdlib/telegram-bot-api). Lifts
+  # the standard Bot API's 50MB upload cap to 2GB and - because it shares
+  # the api-data volume below - lets the api container hand it a local file
+  # path to send directly instead of re-uploading bytes it can already read
+  # off disk.
+  #
+  # Gated behind the "bot" profile (see .env's COMPOSE_PROFILES, which
+  # docker compose reads automatically) rather than always running: it
+  # requires a real --api-id/--api-hash from my.telegram.org and crash-
+  # loops noisily without them, so it only starts once the bot is actually
+  # configured.
+  telegram-bot-api:
+    image: aiogram/telegram-bot-api:latest
+    restart: unless-stopped
+    profiles: ["bot"]
+    command: --local --http-port=8081 --dir=/var/lib/telegram-bot-api --api-id=${TELEGRAM_API_ID} --api-hash=${TELEGRAM_API_HASH}
+    volumes:
+      - bot-api-work:/var/lib/telegram-bot-api
+      - api-data:/data:ro
+
   cloudflared:
     image: cloudflare/cloudflared:latest
     restart: unless-stopped
@@ -42,3 +67,4 @@ services:
 
 volumes:
   api-data:
+  bot-api-work:

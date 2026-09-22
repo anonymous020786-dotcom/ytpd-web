@@ -163,7 +163,54 @@ back from logs):
   the `ytpd_app` role - so enabling RLS isn't actually needed here, only
   worth knowing about if that ever changes.
 
-## Resource inventory (for cleanup/reference)
+## Telegram bot
+
+A bot living inside the existing `api` container (`Controllers/TelegramController.cs`,
+`Bot/`) - not a separate app, so it reuses the same `YoutubeResolverService`,
+`DownloadQueue`/`DownloadWorker`, and Postgres-backed job tracking the web
+UI uses. Disabled by default (`Telegram:BotToken` empty).
+
+**Why a self-hosted Bot API server**: the public `api.telegram.org` caps
+bot uploads at 50MB, useless for actual video files. Running
+`telegram-bot-api` (`github.com/tdlib/telegram-bot-api`) locally with
+`--local` raises that to 2GB and - since it shares the `api-data` volume
+with the `api` container - lets the bot hand it a `file://` URI to a file
+already on disk instead of re-uploading bytes over HTTP a second time.
+
+**Flow**: Telegram POSTs updates to `https://ytpd.videodownloaders.cloud/api/bot/webhook`
+(routed through the same Worker/Tunnel as everything else - no new
+Cloudflare config needed, it's under `/api/*`). The controller checks a
+secret header (set via `setWebhook`, see `set-telegram-webhook.sh`) and a
+chat-ID allowlist (`Telegram:AllowedChatIds`), resolves a pasted YouTube
+link, offers format buttons, creates a normal `DownloadJob`/`DownloadJobItem`
+on button press, and polls for completion in a background task before
+sending the finished file back.
+
+**Setup** (all manual, needs the owner's own Telegram account - nothing
+here can be automated from this side):
+1. Create a bot via [@BotFather](https://t.me/BotFather) (`/newbot`) -> bot token.
+2. Get `api_id`/`api_hash` from https://my.telegram.org/apps (only used by
+   the local Bot API server, not the bot token itself).
+3. Fill in `TELEGRAM_*` in the instance's `.env` (see `.env.example`),
+   including `COMPOSE_PROFILES=bot` to actually start the
+   `telegram-bot-api` container (it's profile-gated - without real
+   `api_id`/`api_hash` it crash-loops, so it's off unless configured).
+4. `docker compose up -d` (or re-run `deploy.sh`).
+5. `TELEGRAM_BOT_TOKEN=... TELEGRAM_WEBHOOK_SECRET=... ./set-telegram-webhook.sh`
+6. Message the bot from Telegram. With `TELEGRAM_ALLOWED_CHAT_IDS` still
+   empty it'll reply with your chat ID instead of doing anything - put
+   that in `.env`'s `TELEGRAM_ALLOWED_CHAT_IDS` and redeploy.
+
+**Known limitation, by design**: if the EC2 instance is asleep when
+Telegram delivers a webhook, the Worker returns its usual "waking up"
+503 (see above) and triggers the wake Lambda, same as a browser request -
+but there's no bot-specific handling to tell the user that via Telegram
+itself (that would mean giving the Worker its own copy of the bot token
+and Telegram-update parsing, which felt like real complexity for a corner
+case). Telegram retries failed webhook deliveries on its own backoff, so
+in practice a message sent to a sleeping bot often just works a few
+seconds later - but the honest fallback is: if the bot doesn't respond,
+resend once the instance has had ~30-60s to wake up.
 
 | Resource | ID/Name |
 |---|---|

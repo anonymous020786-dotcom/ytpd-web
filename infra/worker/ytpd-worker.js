@@ -67,13 +67,25 @@ export default {
         ctx.waitUntil(wakeIfNeeded(env));
         return wakingPage();
       }
-      return response;
+      return stripAccessCookie(response);
     } catch (err) {
       ctx.waitUntil(wakeIfNeeded(env));
       return wakingPage();
     }
   },
 };
+
+// Cloudflare Access sets a CF_Authorization session cookie on responses
+// from ytpd-origin, tied to the Access app protecting it (see the fetch
+// handler above) - confirmed harmless if replayed directly at the origin
+// (Access still rejects it), but this app doesn't use cookies for its own
+// auth (JWT bearer only) and there's no reason to hand an internal auth
+// artifact to every browser that talks to this Worker.
+function stripAccessCookie(response) {
+  var copy = new Response(response.body, response);
+  copy.headers.delete("set-cookie");
+  return copy;
+}
 
 async function fetchWithTimeout(request, timeoutMs) {
   var controller = new AbortController();

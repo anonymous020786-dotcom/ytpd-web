@@ -12,9 +12,16 @@ namespace YtpdWeb.Api.Controllers;
 // Telegram webhooks carry no JWT - Telegram itself has no way to hold one -
 // so this endpoint is [AllowAnonymous] and instead checks the secret token
 // Telegram echoes back in a header (set via setWebhook, see TelegramClient).
-// A per-chat allowlist (Telegram:AllowedChatIds) is the actual access
-// control: anyone can reach this endpoint, but only allowed chat IDs get a
-// real response instead of "here's your chat ID, ask the owner to add it."
+//
+// Two-tier access control:
+//   - Telegram:AllowedChatIds (env config, fixed) - admins. The only ones
+//     who can run /adduser, /removeuser, /users.
+//   - TelegramAllowedUser (DB table, mutable) - everyone an admin has
+//     approved via /adduser. This is what "add users from my Telegram
+//     account" without a redeploy actually means: admins manage this list
+//     live from inside a chat instead of editing .env and redeploying.
+// Anyone can reach this endpoint; only chat IDs in one of the two above
+// get a real response instead of "here's your chat ID, ask an admin."
 [ApiController]
 [AllowAnonymous]
 [Route("api/bot")]
@@ -60,14 +67,28 @@ public class TelegramController(
     private async Task HandleMessageAsync(TgMessage message, CancellationToken ct)
     {
         var chatId = message.Chat.Id;
-        if (!IsAllowed(chatId))
+        var text = message.Text?.Trim() ?? "";
+        var isAdmin = IsAdmin(chatId);
+        var isAdminCommand = text.StartsWith("/adduser") || text.StartsWith("/removeuser") || text.StartsWith("/users");
+
+        if (isAdminCommand)
         {
-            await telegram.SendMessageAsync(chatId,
-                $"🔒 This bot isn't open to this chat yet.\nAsk the owner to add <code>{chatId}</code> to Telegram__AllowedChatIds.", ct: ct);
+            if (!isAdmin)
+            {
+                await telegram.SendMessageAsync(chatId, "🔒 Only admins can manage users.", ct: ct);
+                return;
+            }
+            await HandleAdminCommandAsync(chatId, text, ct);
             return;
         }
 
-        var text = message.Text?.Trim() ?? "";
+        if (!isAdmin && !await IsApprovedAsync(chatId, ct))
+        {
+            await telegram.SendMessageAsync(chatId,
+                $"🔒 This bot isn't open to this chat yet.\nAsk an admin to run <code>/adduser {chatId}</code>.", ct: ct);
+            return;
+        }
+
         if (text.StartsWith("/start"))
         {
             await telegram.SendMessageAsync(chatId,
@@ -119,7 +140,7 @@ public class TelegramController(
         var chatId = callback.Message.Chat.Id;
         var messageId = callback.Message.MessageId;
 
-        if (!IsAllowed(chatId)) return;
+        if (!IsAdmin(chatId) && !await IsApprovedAsync(chatId, ct)) return;
 
         var parts = (callback.Data ?? "").Split(':');
         if (parts.Length != 3 || parts[0] != "dl" || !pending.TryGet(parts[1], out var video))
@@ -221,10 +242,66 @@ public class TelegramController(
         await telegram.EditMessageTextAsync(chatId, messageId, "⌛ Timed out waiting for this download.");
     }
 
-    private bool IsAllowed(long chatId)
+    private async Task HandleAdminCommandAsync(long adminChatId, string text, CancellationToken ct)
     {
-        var allowed = _opts.AllowedChatIds
-            .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-        return allowed.Contains(chatId.ToString());
+        var parts = text.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        var command = parts[0];
+
+        if (command == "/users")
+        {
+            var users = await db.TelegramAllowedUsers.AsNoTracking().OrderBy(u => u.AddedAt).ToListAsync(ct);
+            var admins = string.Join(", ", _opts.AllowedChatIds.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries));
+            var approved = users.Count == 0
+                ? "(none)"
+                : string.Join("\n", users.Select(u => $"  <code>{u.ChatId}</code>{(string.IsNullOrEmpty(u.Label) ? "" : $" - {System.Net.WebUtility.HtmlEncode(u.Label)}")}"));
+            await telegram.SendMessageAsync(adminChatId, $"👑 Admins: {admins}\n\n✅ Approved users:\n{approved}", ct: ct);
+            return;
+        }
+
+        if (parts.Length < 2 || !long.TryParse(parts[1], out var targetChatId))
+        {
+            await telegram.SendMessageAsync(adminChatId, $"Usage: <code>{command} &lt;chat_id&gt;</code>", ct: ct);
+            return;
+        }
+
+        if (command == "/adduser")
+        {
+            var label = parts.Length > 2 ? string.Join(' ', parts[2..]) : null;
+            var existing = await db.TelegramAllowedUsers.FindAsync([targetChatId], ct);
+            if (existing is null)
+            {
+                db.TelegramAllowedUsers.Add(new TelegramAllowedUser { ChatId = targetChatId, Label = label, AddedByChatId = adminChatId });
+                await db.SaveChangesAsync(ct);
+            }
+
+            await telegram.SendMessageAsync(adminChatId, $"✅ Added <code>{targetChatId}</code>.", ct: ct);
+
+            // Best-effort: only works if that chat has messaged the bot
+            // before (Telegram won't let a bot message a chat cold).
+            try { await telegram.SendMessageAsync(targetChatId, "🎉 You've been approved to use this bot. Send /start to begin.", ct: ct); }
+            catch (Exception ex) { logger.LogWarning(ex, "Couldn't notify newly-approved chat {ChatId}", targetChatId); }
+            return;
+        }
+
+        if (command == "/removeuser")
+        {
+            var existing = await db.TelegramAllowedUsers.FindAsync([targetChatId], ct);
+            if (existing is not null)
+            {
+                db.TelegramAllowedUsers.Remove(existing);
+                await db.SaveChangesAsync(ct);
+            }
+            await telegram.SendMessageAsync(adminChatId, $"🗑️ Removed <code>{targetChatId}</code>.", ct: ct);
+        }
     }
+
+    private bool IsAdmin(long chatId)
+    {
+        var admins = _opts.AllowedChatIds
+            .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        return admins.Contains(chatId.ToString());
+    }
+
+    private Task<bool> IsApprovedAsync(long chatId, CancellationToken ct) =>
+        db.TelegramAllowedUsers.AnyAsync(u => u.ChatId == chatId, ct);
 }

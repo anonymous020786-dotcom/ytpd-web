@@ -180,11 +180,21 @@ already on disk instead of re-uploading bytes over HTTP a second time.
 **Flow**: Telegram POSTs updates to `https://ytpd.videodownloaders.cloud/api/bot/webhook`
 (routed through the same Worker/Tunnel as everything else - no new
 Cloudflare config needed, it's under `/api/*`). The controller checks a
-secret header (set via `setWebhook`, see `set-telegram-webhook.sh`) and a
-chat-ID allowlist (`Telegram:AllowedChatIds`), resolves a pasted YouTube
-link, offers format buttons, creates a normal `DownloadJob`/`DownloadJobItem`
-on button press, and polls for completion in a background task before
-sending the finished file back.
+secret header (set via `setWebhook`, see `set-telegram-webhook.sh`),
+resolves a pasted YouTube link, offers format buttons, creates a normal
+`DownloadJob`/`DownloadJobItem` on button press, and polls for completion
+in a background task before sending the finished file back.
+
+**Access control, two tiers**:
+- `Telegram:AllowedChatIds` (env, `.env`'s `TELEGRAM_ALLOWED_CHAT_IDS`) -
+  fixed **admins**, requires editing `.env` and redeploying to change.
+- `TelegramAllowedUser` (Postgres table) - everyone else, added live from
+  inside Telegram by an admin, no redeploy needed:
+  - `/adduser <chat_id> [label]` - approve a chat. Also best-effort DMs
+    that chat to let them know (only works if they've messaged the bot
+    before - Telegram won't let a bot cold-message someone).
+  - `/removeuser <chat_id>` - revoke.
+  - `/users` - list current admins + approved users.
 
 **Setup** (all manual, needs the owner's own Telegram account - nothing
 here can be automated from this side):
@@ -199,7 +209,9 @@ here can be automated from this side):
 5. `TELEGRAM_BOT_TOKEN=... TELEGRAM_WEBHOOK_SECRET=... ./set-telegram-webhook.sh`
 6. Message the bot from Telegram. With `TELEGRAM_ALLOWED_CHAT_IDS` still
    empty it'll reply with your chat ID instead of doing anything - put
-   that in `.env`'s `TELEGRAM_ALLOWED_CHAT_IDS` and redeploy.
+   that in `.env`'s `TELEGRAM_ALLOWED_CHAT_IDS` (this makes you an admin)
+   and redeploy once. After that, approve everyone else with `/adduser`
+   from inside Telegram - no more redeploys needed for new users.
 
 **Known limitation, by design**: if the EC2 instance is asleep when
 Telegram delivers a webhook, the Worker returns its usual "waking up"

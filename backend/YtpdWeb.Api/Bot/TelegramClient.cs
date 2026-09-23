@@ -21,8 +21,49 @@ public class TelegramClient(HttpClient http, IOptions<TelegramOptions> options)
         DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
     };
 
+    // The local telegram-bot-api server needs a few seconds after starting
+    // to finish its own handshake with Telegram before it can actually
+    // serve requests (confirmed live: a real "bot not working" report
+    // traced back to a message arriving in exactly that window right after
+    // a cold wake - both containers start simultaneously, with no explicit
+    // ordering between them, see docker-compose.yml). Retrying a
+    // connection-level failure a few times covers that window without
+    // needing container-level health-check wiring, which would risk
+    // breaking startup entirely when the bot is disabled (telegram-bot-api
+    // doesn't even run then - see TelegramOptions).
+    private const int MaxAttempts = 4;
+    private static readonly TimeSpan RetryDelay = TimeSpan.FromSeconds(3);
+
     private readonly TelegramOptions _opts = options.Value;
     private string BaseUrl => $"{_opts.ApiBaseUrl.TrimEnd('/')}/bot{_opts.BotToken}";
+
+    // Only retries a transport-level failure (couldn't even reach the
+    // server) - a real HTTP response, even an error one like a 400, is
+    // thrown as TelegramApiException instead (see EnsureSuccessAsync)
+    // specifically so it's excluded here. Retrying a deterministic
+    // application error (a malformed request, "chat not found", ...) would
+    // just add ~9 pointless seconds before reporting the same failure.
+    private static async Task<T> WithRetryAsync<T>(Func<Task<T>> action, CancellationToken ct)
+    {
+        for (var attempt = 1; ; attempt++)
+        {
+            try
+            {
+                return await action();
+            }
+            catch (Exception ex) when (attempt < MaxAttempts && ex is HttpRequestException or TaskCanceledException && !ct.IsCancellationRequested)
+            {
+                await Task.Delay(RetryDelay, ct);
+            }
+        }
+    }
+
+    private static async Task EnsureSuccessAsync(HttpResponseMessage resp, string method, CancellationToken ct)
+    {
+        if (resp.IsSuccessStatusCode) return;
+        var responseBody = await resp.Content.ReadAsStringAsync(ct);
+        throw new TelegramApiException($"Telegram {method} failed ({(int)resp.StatusCode}): {responseBody}");
+    }
 
     public Task SendMessageAsync(long chatId, string text, TgInlineKeyboardMarkup? keyboard = null, CancellationToken ct = default) =>
         PostAsync("sendMessage", new { chat_id = chatId, text, reply_markup = keyboard, parse_mode = "HTML" }, ct);
@@ -47,34 +88,37 @@ public class TelegramClient(HttpClient http, IOptions<TelegramOptions> options)
     // real file delivered, audio metadata intact), so that's what this
     // does - one extra copy over the docker-internal network to
     // telegram-bot-api, not over the real internet, so still fast.
-    public async Task SendDocumentByPathAsync(long chatId, string path, string caption, CancellationToken ct = default)
-    {
-        using var form = new MultipartFormDataContent();
-        form.Add(new StringContent(chatId.ToString()), "chat_id");
-        form.Add(new StringContent(caption), "caption");
-
-        await using var stream = File.OpenRead(path);
-        using var fileContent = new StreamContent(stream);
-        form.Add(fileContent, "document", Path.GetFileName(path));
-
-        var resp = await http.PostAsync($"{BaseUrl}/sendDocument", form, ct);
-        if (!resp.IsSuccessStatusCode)
+    public Task SendDocumentByPathAsync(long chatId, string path, string caption, CancellationToken ct = default) =>
+        WithRetryAsync(async () =>
         {
-            var responseBody = await resp.Content.ReadAsStringAsync(ct);
-            throw new HttpRequestException($"Telegram sendDocument failed ({(int)resp.StatusCode}): {responseBody}");
-        }
-    }
+            using var form = new MultipartFormDataContent();
+            form.Add(new StringContent(chatId.ToString()), "chat_id");
+            form.Add(new StringContent(caption), "caption");
+
+            // Re-opened fresh on every attempt - a stream can't be resent
+            // once partially consumed by a failed try.
+            await using var stream = File.OpenRead(path);
+            using var fileContent = new StreamContent(stream);
+            form.Add(fileContent, "document", Path.GetFileName(path));
+
+            var resp = await http.PostAsync($"{BaseUrl}/sendDocument", form, ct);
+            await EnsureSuccessAsync(resp, "sendDocument", ct);
+            return true;
+        }, ct);
 
     public Task SetWebhookAsync(string url, string secretToken, CancellationToken ct = default) =>
         PostAsync("setWebhook", new { url, secret_token = secretToken }, ct);
 
-    private async Task PostAsync(string method, object body, CancellationToken ct)
-    {
-        var resp = await http.PostAsJsonAsync($"{BaseUrl}/{method}", body, JsonOptions, ct);
-        if (!resp.IsSuccessStatusCode)
+    private Task PostAsync(string method, object body, CancellationToken ct) =>
+        WithRetryAsync(async () =>
         {
-            var responseBody = await resp.Content.ReadAsStringAsync(ct);
-            throw new HttpRequestException($"Telegram {method} failed ({(int)resp.StatusCode}): {responseBody}");
-        }
-    }
+            var resp = await http.PostAsJsonAsync($"{BaseUrl}/{method}", body, JsonOptions, ct);
+            await EnsureSuccessAsync(resp, method, ct);
+            return true;
+        }, ct);
 }
+
+// A real response from Telegram (or the local server), just not a
+// successful one - deliberately not an HttpRequestException, so
+// WithRetryAsync's filter doesn't retry a deterministic application error.
+public class TelegramApiException(string message) : Exception(message);
